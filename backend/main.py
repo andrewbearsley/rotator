@@ -455,3 +455,69 @@ async def get_memes_historical():
     except Exception as e:
         logger.error(f"Error fetching Memes historical data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/doge-history")
+async def get_doge_history():
+    """Fetch DOGE price history for the last 7 days"""
+    logger.info("Fetching DOGE price history")
+    try:
+        # Get current timestamp and 7 days ago timestamp
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=7)
+        
+        async with httpx.AsyncClient() as client:
+            # CoinMarketCap ID for DOGE is 74
+            response = await client.get(
+                f"{CMC_BASE_URL}/v2/cryptocurrency/quotes/historical",
+                headers=headers,
+                params={
+                    "id": "74",  # DOGE's ID
+                    "time_start": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "time_end": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "interval": "1d",  # daily intervals
+                    "count": 7,
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            logger.info(f"Received response from CoinMarketCap: {json.dumps(data)[:200]}...")
+            
+            if not data.get("data"):
+                raise HTTPException(status_code=500, detail="No data received from CoinMarketCap")
+            
+            # Extract quotes from the response
+            quotes = data["data"]["quotes"]
+            
+            # Transform the data into a list of price points with percentage changes
+            price_history = []
+            prev_price = None
+            
+            # Sort quotes by timestamp first
+            sorted_quotes = sorted(quotes, key=lambda x: x["timestamp"])
+            
+            for quote in sorted_quotes:
+                timestamp = quote["timestamp"]
+                current_price = quote["quote"]["USD"]["price"]
+                
+                # Calculate percentage change from previous day
+                percent_change = 0
+                if prev_price is not None:
+                    percent_change = ((current_price - prev_price) / prev_price) * 100
+                
+                price_history.append({
+                    "timestamp": timestamp,
+                    "price": current_price,
+                    "percent_change": round(percent_change, 2)
+                })
+                
+                prev_price = current_price
+            
+            return price_history
+            
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch DOGE data: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error fetching DOGE history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

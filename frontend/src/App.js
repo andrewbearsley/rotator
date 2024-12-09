@@ -20,6 +20,7 @@ import {
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward, Clear as ClearIcon, Star, StarBorder } from '@mui/icons-material';
 import axios from 'axios';
+import DogeChart from './components/DogeChart';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -246,11 +247,20 @@ function App() {
   };
 
   return (
-    <Container maxWidth="xl">
+    <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Crypto Category Rotation
+          Crypto Rotation Tracker
         </Typography>
+        
+        <Card sx={{ mb: 4 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              DOGE Price History
+            </Typography>
+            <DogeChart />
+          </CardContent>
+        </Card>
 
         {/* Memes Historical Data */}
         <Card sx={{ mb: 4 }}>
