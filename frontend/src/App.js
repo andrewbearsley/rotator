@@ -20,7 +20,6 @@ import {
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward, Clear as ClearIcon, Star, StarBorder } from '@mui/icons-material';
 import axios from 'axios';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as ChartTooltip, Legend } from 'recharts';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -60,6 +59,9 @@ function App() {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [historicalData, setHistoricalData] = useState([]);
   const [historicalLoading, setHistoricalLoading] = useState(false);
+  const [memesHistoricalData, setMemesHistoricalData] = useState([]);
+  const [memesHistoricalLoading, setMemesHistoricalLoading] = useState(false);
+  const [memesHistoricalError, setMemesHistoricalError] = useState(null);
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -91,11 +93,23 @@ function App() {
       if (!selectedCategory) return;
       
       setHistoricalLoading(true);
+      console.log('Fetching historical data for category:', {
+        id: selectedCategory.id,
+        name: selectedCategory.name,
+        url: `${API_BASE_URL}/api/categories/${selectedCategory.id}/historical`
+      });
+      
       try {
         const response = await axios.get(`${API_BASE_URL}/api/categories/${selectedCategory.id}/historical`);
+        console.log('Historical data response:', response.data);
         setHistoricalData(response.data.data);
       } catch (err) {
-        console.error('Failed to fetch historical data:', err);
+        console.error('Failed to fetch historical data:', {
+          error: err,
+          response: err.response?.data,
+          category: selectedCategory,
+          status: err.response?.status
+        });
       } finally {
         setHistoricalLoading(false);
       }
@@ -103,6 +117,25 @@ function App() {
 
     fetchHistoricalData();
   }, [selectedCategory]);
+
+  useEffect(() => {
+    const fetchMemesHistorical = async () => {
+      setMemesHistoricalLoading(true);
+      setMemesHistoricalError(null);
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/memes/historical`);
+        console.log('Memes historical data:', response.data);
+        setMemesHistoricalData(response.data.data);
+      } catch (err) {
+        console.error('Failed to fetch Memes historical data:', err);
+        setMemesHistoricalError('Failed to load Memes historical data');
+      } finally {
+        setMemesHistoricalLoading(false);
+      }
+    };
+
+    fetchMemesHistorical();
+  }, []);
 
   const toggleFavorite = (categoryName) => {
     setFavorites(prevFavorites => {
@@ -213,76 +246,115 @@ function App() {
   };
 
   return (
-    <Container maxWidth="lg">
-      <Box py={4}>
+    <Container maxWidth="xl">
+      <Box sx={{ my: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          Crypto Category Rotation Tracker
+          Crypto Category Rotation
         </Typography>
 
-        <Box mb={3} display="flex" gap={2} alignItems="center" flexWrap="wrap">
-          <TextField
-            label="Search Categories"
-            variant="outlined"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            size="small"
-            placeholder="Search by name, title, or description"
-            sx={{ minWidth: 250 }}
-            InputProps={{
-              endAdornment: searchTerm && (
-                <IconButton
-                  size="small"
-                  onClick={() => setSearchTerm('')}
-                  edge="end"
-                >
-                  <ClearIcon />
-                </IconButton>
-              ),
-            }}
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={showFavoritesOnly}
-                onChange={(e) => setShowFavoritesOnly(e.target.checked)}
-              />
-            }
-            label="Favorites Only"
-          />
-          <FormControl size="small" sx={{ minWidth: 200 }}>
-            <InputLabel>Sort By</InputLabel>
-            <Select
-              value={sortBy}
-              label="Sort By"
-              onChange={handleSortChange}
-            >
-              {SORT_OPTIONS.map(option => (
-                <MenuItem key={option.value} value={option.value}>
-                  {option.label}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Tooltip title={sortDirection === 'asc' ? 'Sort Ascending' : 'Sort Descending'}>
-            <IconButton onClick={toggleSortDirection} size="small">
-              {sortDirection === 'asc' ? <ArrowUpward /> : <ArrowDownward />}
-            </IconButton>
-          </Tooltip>
-          <FormControl size="small">
-            <InputLabel>Items per page</InputLabel>
-            <Select
-              value={itemsPerPage}
-              label="Items per page"
-              onChange={handleItemsPerPageChange}
-            >
-              <MenuItem value={10}>10</MenuItem>
-              <MenuItem value={20}>20</MenuItem>
-              <MenuItem value={50}>50</MenuItem>
-              <MenuItem value={100}>100</MenuItem>
-            </Select>
-          </FormControl>
-        </Box>
+        {/* Memes Historical Data */}
+        <Card sx={{ mb: 4 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Memes Category - Last 7 Days
+            </Typography>
+            {memesHistoricalLoading ? (
+              <CircularProgress />
+            ) : memesHistoricalError ? (
+              <Typography color="error">{memesHistoricalError}</Typography>
+            ) : (
+              <Box>
+                {memesHistoricalData.map((point, index) => (
+                  <Box key={index} sx={{ mb: 1 }}>
+                    <Typography>
+                      Date: {new Date(point.timestamp).toLocaleDateString()}
+                    </Typography>
+                    <Typography>
+                      Market Cap Change 24h: {point.market_cap_change_24h.toFixed(2)}%
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </CardContent>
+        </Card>
 
+        {/* Search and Filter Controls */}
+        <Grid container spacing={2} mb={2}>
+          <Grid item xs={12} md={6} lg={4}>
+            <TextField
+              label="Search Categories"
+              variant="outlined"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              size="small"
+              placeholder="Search by name, title, or description"
+              sx={{ minWidth: 250 }}
+              InputProps={{
+                endAdornment: searchTerm && (
+                  <IconButton
+                    size="small"
+                    onClick={() => setSearchTerm('')}
+                    edge="end"
+                  >
+                    <ClearIcon />
+                  </IconButton>
+                ),
+              }}
+            />
+          </Grid>
+          <Grid item xs={12} md={6} lg={4}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={showFavoritesOnly}
+                  onChange={(e) => setShowFavoritesOnly(e.target.checked)}
+                />
+              }
+              label="Favorites Only"
+            />
+          </Grid>
+          <Grid item xs={12} md={6} lg={4}>
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel>Sort By</InputLabel>
+              <Select
+                value={sortBy}
+                label="Sort By"
+                onChange={handleSortChange}
+              >
+                {SORT_OPTIONS.map(option => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} md={6} lg={4}>
+            <Tooltip title={sortDirection === 'asc' ? 'Sort Ascending' : 'Sort Descending'}>
+              <IconButton onClick={toggleSortDirection} size="small">
+                {sortDirection === 'asc' ? <ArrowUpward /> : <ArrowDownward />}
+              </IconButton>
+            </Tooltip>
+          </Grid>
+          <Grid item xs={12} md={6} lg={4}>
+            <FormControl size="small">
+              <InputLabel>Items per page</InputLabel>
+              <Select
+                value={itemsPerPage}
+                label="Items per page"
+                onChange={handleItemsPerPageChange}
+              >
+                <MenuItem value={10}>10</MenuItem>
+                <MenuItem value={20}>20</MenuItem>
+                <MenuItem value={50}>50</MenuItem>
+                <MenuItem value={100}>100</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
+
+        {/* Categories Grid */}
         <Grid container spacing={3}>
           {displayedCategories.map((category) => (
             <Grid item xs={12} md={6} key={category.id}>
@@ -337,70 +409,8 @@ function App() {
                           <CircularProgress size={24} />
                         </Box>
                       ) : historicalData && historicalData.length > 0 ? (
-                        <LineChart
-                          width={500}
-                          height={300}
-                          data={historicalData}
-                          margin={{
-                            top: 5,
-                            right: 30,
-                            left: 20,
-                            bottom: 5,
-                          }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis 
-                            dataKey="timestamp" 
-                            tickFormatter={(timestamp) => new Date(timestamp).toLocaleDateString()}
-                          />
-                          <YAxis 
-                            yAxisId="left"
-                            tickFormatter={(value) => `$${(value / 1e9).toFixed(1)}B`}
-                          />
-                          <YAxis 
-                            yAxisId="right" 
-                            orientation="right"
-                            tickFormatter={(value) => `$${(value / 1e9).toFixed(1)}B`}
-                          />
-                          <Tooltip
-                            content={({ active, payload, label }) => {
-                              if (active && payload && payload.length) {
-                                return (
-                                  <Box sx={{ bgcolor: 'background.paper', p: 1, border: 1, borderColor: 'divider' }}>
-                                    <Typography variant="body2">
-                                      {new Date(label).toLocaleDateString()}
-                                    </Typography>
-                                    {payload.map((entry) => (
-                                      <Typography
-                                        key={entry.name}
-                                        variant="body2"
-                                        sx={{ color: entry.color }}
-                                      >
-                                        {entry.name}: ${(entry.value / 1e9).toFixed(2)}B
-                                      </Typography>
-                                    ))}
-                                  </Box>
-                                );
-                              }
-                              return null;
-                            }}
-                          />
-                          <Legend />
-                          <Line
-                            yAxisId="left"
-                            type="monotone"
-                            dataKey="market_cap"
-                            stroke="#8884d8"
-                            name="Market Cap"
-                          />
-                          <Line
-                            yAxisId="right"
-                            type="monotone"
-                            dataKey="volume_24h"
-                            stroke="#82ca9d"
-                            name="Volume 24h"
-                          />
-                        </LineChart>
+                        <Box sx={{ width: '100%', height: 300 }}>
+                        </Box>
                       ) : (
                         <Typography color="text.secondary" align="center">
                           No historical data available
@@ -427,21 +437,8 @@ function App() {
           <Typography variant="h5" component="h2" gutterBottom>
             Top Categories Performance
           </Typography>
-          <LineChart
-            width={800}
-            height={400}
-            data={sortedCategories.slice(0, 10)}
-            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis />
-            <ChartTooltip />
-            <Legend />
-            <Line type="monotone" dataKey="price_change_24h" name="Price 24h Change" stroke="#8884d8" />
-            <Line type="monotone" dataKey="market_cap_change_24h" name="Market Cap 24h Change" stroke="#82ca9d" />
-            <Line type="monotone" dataKey="volume_change_24h" name="Volume 24h Change" stroke="#ffc658" />
-          </LineChart>
+          <Box sx={{ width: '100%', height: 400 }}>
+          </Box>
         </Box>
       </Box>
     </Container>
