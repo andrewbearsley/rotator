@@ -389,8 +389,11 @@ function App() {
             <Grid item xs={12} md={6} key={category.id}>
               <Card 
                 sx={{ 
+                  height: '100%',
                   cursor: 'pointer',
-                  '&:hover': { boxShadow: 6 }
+                  '&:hover': {
+                    boxShadow: 6
+                  }
                 }}
                 onClick={() => handleCategoryClick(category)}
               >

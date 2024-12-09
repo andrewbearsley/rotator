@@ -7,9 +7,12 @@ import os
 from dotenv import load_dotenv
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict
 from bson import ObjectId
 import json
+import asyncio
+from cachetools import TTLCache
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +43,78 @@ headers = {
     "X-CMC_PRO_API_KEY": CMC_API_KEY,
     "Accept": "application/json"
 }
+
+# Cache configuration
+TOKEN_INFO_CACHE = TTLCache(maxsize=1000, ttl=3600)  # 1 hour TTL
+HISTORICAL_CACHE = TTLCache(maxsize=1000, ttl=3600)  # 1 hour TTL
+CATEGORY_CACHE = TTLCache(maxsize=100, ttl=300)  # 5 minutes TTL
+
+# Rate limiting configuration
+RATE_LIMIT_CALLS = 30  # calls per minute
+RATE_LIMIT_WINDOW = 60  # seconds
+last_calls = []
+
+async def check_rate_limit():
+    """Implement rate limiting"""
+    current_time = time.time()
+    # Remove calls older than the window
+    global last_calls
+    last_calls = [call_time for call_time in last_calls if current_time - call_time < RATE_LIMIT_WINDOW]
+    
+    if len(last_calls) >= RATE_LIMIT_CALLS:
+        wait_time = RATE_LIMIT_WINDOW - (current_time - last_calls[0])
+        if wait_time > 0:
+            logger.info(f"Rate limit reached, waiting {wait_time:.2f} seconds")
+            await asyncio.sleep(wait_time)
+            return await check_rate_limit()
+    
+    last_calls.append(current_time)
+    return True
+
+async def batch_get_token_info(token_ids: List[int], client: httpx.AsyncClient) -> Dict:
+    """Get token info in batches to reduce API calls"""
+    if not token_ids:
+        return {}
+    
+    # Check cache first
+    result = {}
+    uncached_ids = []
+    for token_id in token_ids:
+        cached = TOKEN_INFO_CACHE.get(token_id)
+        if cached:
+            result[str(token_id)] = cached
+        else:
+            uncached_ids.append(token_id)
+    
+    if not uncached_ids:
+        return result
+    
+    # Split into batches of 100 (CMC limit)
+    BATCH_SIZE = 100
+    batches = [uncached_ids[i:i + BATCH_SIZE] for i in range(0, len(uncached_ids), BATCH_SIZE)]
+    
+    for batch in batches:
+        await check_rate_limit()
+        try:
+            response = await client.get(
+                f"{CMC_BASE_URL}/v2/cryptocurrency/info",
+                headers=headers,
+                params={"id": ",".join(map(str, batch))}
+            )
+            response.raise_for_status()
+            data = response.json().get("data", {})
+            
+            # Update cache and result
+            for token_id, token_data in data.items():
+                TOKEN_INFO_CACHE[int(token_id)] = token_data
+                result[token_id] = token_data
+                
+        except httpx.HTTPError as e:
+            logger.error(f"Error fetching token info batch: {str(e)}")
+            # Continue with partial results rather than failing completely
+            continue
+    
+    return result
 
 class HistoricalData(BaseModel):
     category_id: str
@@ -85,6 +160,7 @@ async def get_categories():
     logger.info("Attempting to fetch categories")
     try:
         async with httpx.AsyncClient() as client:
+            await check_rate_limit()
             response = await client.get(
                 f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
                 headers=headers
@@ -143,6 +219,7 @@ async def get_category_historical(category_id: str, days: int = 30):
         
         # If no cached data, fetch from CoinMarketCap
         async with httpx.AsyncClient() as client:
+            await check_rate_limit()
             url = f"{CMC_BASE_URL}/v1/cryptocurrency/category/historical"
             params = {
                 "id": category_id,
@@ -211,6 +288,7 @@ async def get_category_details(category_id: str):
     """Fetch detailed information about a specific category"""
     logger.info(f"Attempting to fetch category details for {category_id}")
     async with httpx.AsyncClient() as client:
+        await check_rate_limit()
         response = await client.get(
             f"{CMC_BASE_URL}/v1/cryptocurrency/category/historical",
             headers=headers,
@@ -257,6 +335,7 @@ async def compare_categories(category_ids: str, days: int = 30):
         async with httpx.AsyncClient() as client:
             for category_id in category_list:
                 # First get the category details to get the coins
+                await check_rate_limit()
                 response = await client.get(
                     f"{CMC_BASE_URL}/v1/cryptocurrency/category",
                     params={"id": category_id},
@@ -287,6 +366,7 @@ async def compare_categories(category_ids: str, days: int = 30):
                 }
                 logger.info(f"Making request to CoinMarketCap: {url} with params: {params}")
                 
+                await check_rate_limit()
                 response = await client.get(url, params=params, headers=headers)
                 logger.info(f"Response status code: {response.status_code}")
                 
@@ -360,6 +440,7 @@ async def get_top_meme_tokens():
         # First, get the meme category tokens
         async with httpx.AsyncClient() as client:
             # Get all categories to find the meme category ID
+            await check_rate_limit()
             categories_response = await client.get(
                 f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
                 headers=headers
@@ -384,6 +465,7 @@ async def get_top_meme_tokens():
             logger.info(f"Found meme category: {meme_category.get('name')} (ID: {meme_category.get('id')})")
             
             # Get tokens in the meme category
+            await check_rate_limit()
             response = await client.get(
                 f"{CMC_BASE_URL}/v1/cryptocurrency/category",
                 headers=headers,
@@ -500,6 +582,7 @@ async def get_memes_historical():
         logger.info(f"Using headers: {headers}")
         
         async with httpx.AsyncClient() as client:
+            await check_rate_limit()
             response = await client.get(
                 url,
                 params=params,
@@ -589,6 +672,7 @@ async def get_doge_history():
         
         async with httpx.AsyncClient() as client:
             # CoinMarketCap ID for DOGE is 74
+            await check_rate_limit()
             response = await client.get(
                 f"{CMC_BASE_URL}/v2/cryptocurrency/quotes/historical",
                 headers=headers,
@@ -652,6 +736,7 @@ async def get_top_meme_tokens():
         # First, get the meme category tokens
         async with httpx.AsyncClient() as client:
             # Get all categories to find the meme category ID
+            await check_rate_limit()
             categories_response = await client.get(
                 f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
                 headers=headers
@@ -669,6 +754,7 @@ async def get_top_meme_tokens():
                 raise HTTPException(status_code=500, detail="Meme category not found")
             
             # Get tokens in the meme category
+            await check_rate_limit()
             response = await client.get(
                 f"{CMC_BASE_URL}/v1/cryptocurrency/category",
                 headers=headers,
@@ -764,27 +850,33 @@ async def get_top_tokens_by_category(category_name: str, limit: int = 10):
     """Fetch top tokens from a specific category"""
     logger.info(f"Fetching top {limit} tokens from category: {category_name}")
     try:
+        # Check category cache
+        target_category = CATEGORY_CACHE.get(category_name.lower())
+        
         async with httpx.AsyncClient() as client:
-            # Get all categories to find the target category ID
-            categories_response = await client.get(
-                f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
-                headers=headers
-            )
-            categories_response.raise_for_status()
-            categories_data = categories_response.json()
-            
-            # Find the category ID
-            target_category = None
-            for cat in categories_data.get("data", []):
-                if cat.get("name", "").lower() == category_name.lower():
-                    target_category = cat
-                    break
+            if not target_category:
+                await check_rate_limit()
+                # Get all categories to find the target category ID
+                categories_response = await client.get(
+                    f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
+                    headers=headers
+                )
+                categories_response.raise_for_status()
+                categories_data = categories_response.json()
+                
+                # Find the category ID
+                for cat in categories_data.get("data", []):
+                    if cat.get("name", "").lower() == category_name.lower():
+                        target_category = cat
+                        CATEGORY_CACHE[category_name.lower()] = cat
+                        break
             
             if not target_category:
                 raise HTTPException(status_code=404, detail=f"Category '{category_name}' not found")
             
             logger.info(f"Found category: {target_category.get('name')} (ID: {target_category.get('id')})")
             
+            await check_rate_limit()
             # Get tokens in the category
             response = await client.get(
                 f"{CMC_BASE_URL}/v1/cryptocurrency/category",
@@ -806,6 +898,13 @@ async def get_top_tokens_by_category(category_name: str, limit: int = 10):
                 reverse=True
             )[:limit]
             
+            # Cache token info
+            for token in tokens:
+                TOKEN_INFO_CACHE[token["id"]] = {
+                    "symbol": token["symbol"],
+                    "name": token["name"]
+                }
+            
             # Return simplified token info
             return [{
                 "id": token["id"],
@@ -826,29 +925,29 @@ async def get_tokens_historical_data(token_ids: List[int], days: int = 7):
     """Fetch historical data for a list of token IDs"""
     logger.info(f"Fetching {days} days of historical data for tokens: {token_ids}")
     try:
-        # Get current timestamp and start timestamp
         end_time = datetime.now()
         start_time = end_time - timedelta(days=days)
         
         all_tokens_history = []
         async with httpx.AsyncClient() as client:
+            # Batch get token info
+            token_info = await batch_get_token_info(token_ids, client)
+            
             for token_id in token_ids:
+                # Check historical cache
+                cache_key = f"{token_id}_{days}"
+                cached_history = HISTORICAL_CACHE.get(cache_key)
+                if cached_history:
+                    all_tokens_history.append(cached_history)
+                    continue
+                
                 try:
-                    # Get token info first
-                    info_response = await client.get(
-                        f"{CMC_BASE_URL}/v2/cryptocurrency/info",
-                        headers=headers,
-                        params={"id": str(token_id)}
-                    )
-                    info_response.raise_for_status()
-                    token_info = info_response.json()
-                    
-                    if not token_info.get("data"):
+                    token_data = token_info.get(str(token_id))
+                    if not token_data:
                         logger.warning(f"No info found for token ID {token_id}")
                         continue
                     
-                    token_data = token_info["data"][str(token_id)]
-                    
+                    await check_rate_limit()
                     # Get historical data
                     hist_response = await client.get(
                         f"{CMC_BASE_URL}/v2/cryptocurrency/quotes/historical",
@@ -892,12 +991,16 @@ async def get_tokens_historical_data(token_ids: List[int], days: int = 7):
                         
                         prev_price = current_price
                     
-                    all_tokens_history.append({
+                    token_history = {
                         "id": token_id,
                         "symbol": token_data["symbol"],
                         "name": token_data["name"],
                         "history": price_history
-                    })
+                    }
+                    
+                    # Cache the results
+                    HISTORICAL_CACHE[cache_key] = token_history
+                    all_tokens_history.append(token_history)
                     
                 except Exception as e:
                     logger.error(f"Error fetching data for token {token_id}: {str(e)}")
