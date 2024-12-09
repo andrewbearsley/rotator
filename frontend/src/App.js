@@ -57,6 +57,9 @@ function App() {
   const [sortDirection, setSortDirection] = useState('desc');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [favorites, setFavorites] = useState(new Set(DEFAULT_FAVORITES));
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [historicalData, setHistoricalData] = useState([]);
+  const [historicalLoading, setHistoricalLoading] = useState(false);
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -82,6 +85,24 @@ function App() {
       setFavorites(new Set(JSON.parse(savedFavorites)));
     }
   }, []);
+
+  useEffect(() => {
+    const fetchHistoricalData = async () => {
+      if (!selectedCategory) return;
+      
+      setHistoricalLoading(true);
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/categories/${selectedCategory.id}/historical`);
+        setHistoricalData(response.data.data);
+      } catch (err) {
+        console.error('Failed to fetch historical data:', err);
+      } finally {
+        setHistoricalLoading(false);
+      }
+    };
+
+    fetchHistoricalData();
+  }, [selectedCategory]);
 
   const toggleFavorite = (categoryName) => {
     setFavorites(prevFavorites => {
@@ -143,9 +164,17 @@ function App() {
 
   const sortedCategories = sortCategories(filteredCategories);
   
-  const pageCount = Math.ceil(sortedCategories.length / itemsPerPage);
-  const displayedCategories = sortedCategories
-    .slice((page - 1) * itemsPerPage, page * itemsPerPage);
+  // Add ranking to categories based on market cap
+  const rankedCategories = sortedCategories.map((category, index) => ({
+    ...category,
+    rank: categories
+      .slice()
+      .sort((a, b) => (b.market_cap || 0) - (a.market_cap || 0))
+      .findIndex(c => c.id === category.id) + 1
+  }));
+
+  const startIndex = (page - 1) * itemsPerPage;
+  const displayedCategories = rankedCategories.slice(startIndex, startIndex + itemsPerPage);
 
   const handlePageChange = (event, value) => {
     setPage(value);
@@ -154,6 +183,10 @@ function App() {
   const handleItemsPerPageChange = (event) => {
     setItemsPerPage(event.target.value);
     setPage(1);
+  };
+
+  const handleCategoryClick = (category) => {
+    setSelectedCategory(category);
   };
 
   if (loading) {
@@ -230,7 +263,7 @@ function App() {
               ))}
             </Select>
           </FormControl>
-          <Tooltip title={`Sort ${sortDirection === 'asc' ? 'Ascending' : 'Descending'}`}>
+          <Tooltip title={sortDirection === 'asc' ? 'Sort Ascending' : 'Sort Descending'}>
             <IconButton onClick={toggleSortDirection} size="small">
               {sortDirection === 'asc' ? <ArrowUpward /> : <ArrowDownward />}
             </IconButton>
@@ -253,14 +286,28 @@ function App() {
         <Grid container spacing={3}>
           {displayedCategories.map((category) => (
             <Grid item xs={12} md={6} key={category.id}>
-              <Card>
+              <Card 
+                sx={{ 
+                  cursor: 'pointer',
+                  '&:hover': { boxShadow: 6 }
+                }}
+                onClick={() => handleCategoryClick(category)}
+              >
                 <CardContent>
                   <Box display="flex" justifyContent="space-between" alignItems="center">
-                    <Typography variant="h6" component="h2">
-                      {category.name}
-                    </Typography>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Typography variant="body2" color="textSecondary" sx={{ minWidth: '3rem' }}>
+                        #{category.rank}
+                      </Typography>
+                      <Typography variant="h6" component="h2">
+                        {category.name}
+                      </Typography>
+                    </Box>
                     <IconButton 
-                      onClick={() => toggleFavorite(category.name)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFavorite(category.name);
+                      }}
                       size="small"
                       sx={{ ml: 1 }}
                     >
@@ -283,6 +330,84 @@ function App() {
                   <Typography color="textSecondary">
                     Price 24h: {formatPercentage(category.price_change_24h)}
                   </Typography>
+                  {selectedCategory?.id === category.id && (
+                    <Box mt={2}>
+                      {historicalLoading ? (
+                        <Box display="flex" justifyContent="center" p={2}>
+                          <CircularProgress size={24} />
+                        </Box>
+                      ) : historicalData && historicalData.length > 0 ? (
+                        <LineChart
+                          width={500}
+                          height={300}
+                          data={historicalData}
+                          margin={{
+                            top: 5,
+                            right: 30,
+                            left: 20,
+                            bottom: 5,
+                          }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="timestamp" 
+                            tickFormatter={(timestamp) => new Date(timestamp).toLocaleDateString()}
+                          />
+                          <YAxis 
+                            yAxisId="left"
+                            tickFormatter={(value) => `$${(value / 1e9).toFixed(1)}B`}
+                          />
+                          <YAxis 
+                            yAxisId="right" 
+                            orientation="right"
+                            tickFormatter={(value) => `$${(value / 1e9).toFixed(1)}B`}
+                          />
+                          <Tooltip
+                            content={({ active, payload, label }) => {
+                              if (active && payload && payload.length) {
+                                return (
+                                  <Box sx={{ bgcolor: 'background.paper', p: 1, border: 1, borderColor: 'divider' }}>
+                                    <Typography variant="body2">
+                                      {new Date(label).toLocaleDateString()}
+                                    </Typography>
+                                    {payload.map((entry) => (
+                                      <Typography
+                                        key={entry.name}
+                                        variant="body2"
+                                        sx={{ color: entry.color }}
+                                      >
+                                        {entry.name}: ${(entry.value / 1e9).toFixed(2)}B
+                                      </Typography>
+                                    ))}
+                                  </Box>
+                                );
+                              }
+                              return null;
+                            }}
+                          />
+                          <Legend />
+                          <Line
+                            yAxisId="left"
+                            type="monotone"
+                            dataKey="market_cap"
+                            stroke="#8884d8"
+                            name="Market Cap"
+                          />
+                          <Line
+                            yAxisId="right"
+                            type="monotone"
+                            dataKey="volume_24h"
+                            stroke="#82ca9d"
+                            name="Volume 24h"
+                          />
+                        </LineChart>
+                      ) : (
+                        <Typography color="text.secondary" align="center">
+                          No historical data available
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
                 </CardContent>
               </Card>
             </Grid>
@@ -291,7 +416,7 @@ function App() {
 
         <Box mt={3} display="flex" justifyContent="center">
           <Pagination 
-            count={pageCount} 
+            count={Math.ceil(rankedCategories.length / itemsPerPage)} 
             page={page} 
             onChange={handlePageChange}
             color="primary"
