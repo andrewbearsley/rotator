@@ -352,6 +352,128 @@ async def compare_categories(category_ids: str, days: int = 30):
         logger.error(f"Error comparing categories: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/memes-top-tokens")
+async def get_top_meme_tokens():
+    """Fetch historical data for top 5 meme tokens"""
+    logger.info("Fetching top meme tokens historical data")
+    try:
+        # First, get the meme category tokens
+        async with httpx.AsyncClient() as client:
+            # Get all categories to find the meme category ID
+            categories_response = await client.get(
+                f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
+                headers=headers
+            )
+            categories_response.raise_for_status()
+            categories_data = categories_response.json()
+            
+            logger.info(f"Found {len(categories_data.get('data', []))} categories")
+            
+            # Find the meme category ID
+            meme_category = None
+            for cat in categories_data.get("data", []):
+                name = cat.get("name", "").lower()
+                logger.info(f"Category: {name} (ID: {cat.get('id')})")
+                if name == "memes":  # Exact match for "memes"
+                    meme_category = cat
+                    break
+            
+            if not meme_category:
+                raise HTTPException(status_code=500, detail="Meme category not found")
+            
+            logger.info(f"Found meme category: {meme_category.get('name')} (ID: {meme_category.get('id')})")
+            
+            # Get tokens in the meme category
+            response = await client.get(
+                f"{CMC_BASE_URL}/v1/cryptocurrency/category",
+                headers=headers,
+                params={
+                    "id": meme_category["id"]
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data.get("data"):
+                raise HTTPException(status_code=500, detail="No data received from CoinMarketCap")
+            
+            # Get top 5 tokens by market cap
+            tokens = sorted(
+                data["data"]["coins"],
+                key=lambda x: float(x.get("marketCap", 0) or 0),
+                reverse=True
+            )[:5]
+            
+            # Get current timestamp and 7 days ago timestamp
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=7)
+            
+            # Fetch historical data for each token
+            all_tokens_history = []
+            for token in tokens:
+                try:
+                    hist_response = await client.get(
+                        f"{CMC_BASE_URL}/v2/cryptocurrency/quotes/historical",
+                        headers=headers,
+                        params={
+                            "id": str(token["id"]),
+                            "time_start": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "time_end": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "interval": "1d",
+                            "count": 7,
+                        }
+                    )
+                    hist_response.raise_for_status()
+                    hist_data = hist_response.json()
+                    
+                    if not hist_data.get("data"):
+                        logger.warning(f"No historical data for token {token['symbol']}")
+                        continue
+                    
+                    # Process historical data
+                    quotes = hist_data["data"]["quotes"]
+                    price_history = []
+                    prev_price = None
+                    
+                    # Sort quotes by timestamp
+                    sorted_quotes = sorted(quotes, key=lambda x: x["timestamp"])
+                    
+                    for quote in sorted_quotes:
+                        current_price = quote["quote"]["USD"]["price"]
+                        
+                        # Calculate percentage change
+                        percent_change = 0
+                        if prev_price is not None:
+                            percent_change = ((current_price - prev_price) / prev_price) * 100
+                        
+                        price_history.append({
+                            "timestamp": quote["timestamp"],
+                            "price": current_price,
+                            "percent_change": round(percent_change, 2)
+                        })
+                        
+                        prev_price = current_price
+                    
+                    all_tokens_history.append({
+                        "id": token["id"],
+                        "symbol": token["symbol"],
+                        "name": token["name"],
+                        "history": price_history
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error fetching historical data for {token['symbol']}: {str(e)}")
+                    continue
+            
+            return all_tokens_history
+            
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch meme tokens data: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error fetching meme tokens: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/memes/historical")
 async def get_memes_historical():
     try:
@@ -520,4 +642,269 @@ async def get_doge_history():
         raise HTTPException(status_code=500, detail=f"Failed to fetch DOGE data: {str(e)}")
     except Exception as e:
         logger.error(f"Error fetching DOGE history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/memes-top-tokens")
+async def get_top_meme_tokens():
+    """Fetch historical data for top 5 meme tokens"""
+    logger.info("Fetching top meme tokens historical data")
+    try:
+        # First, get the meme category tokens
+        async with httpx.AsyncClient() as client:
+            # Get all categories to find the meme category ID
+            categories_response = await client.get(
+                f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
+                headers=headers
+            )
+            categories_response.raise_for_status()
+            categories_data = categories_response.json()
+            
+            # Find the meme category ID
+            meme_category = next(
+                (cat for cat in categories_data["data"] if cat["name"].lower() == "meme"),
+                None
+            )
+            
+            if not meme_category:
+                raise HTTPException(status_code=500, detail="Meme category not found")
+            
+            # Get tokens in the meme category
+            response = await client.get(
+                f"{CMC_BASE_URL}/v1/cryptocurrency/category",
+                headers=headers,
+                params={
+                    "id": meme_category["id"]
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data.get("data"):
+                raise HTTPException(status_code=500, detail="No data received from CoinMarketCap")
+            
+            # Get top 5 tokens by market cap
+            tokens = sorted(
+                data["data"]["coins"],
+                key=lambda x: float(x.get("marketCap", 0) or 0),
+                reverse=True
+            )[:5]
+            
+            # Get current timestamp and 7 days ago timestamp
+            end_time = datetime.now()
+            start_time = end_time - timedelta(days=7)
+            
+            # Fetch historical data for each token
+            all_tokens_history = []
+            for token in tokens:
+                try:
+                    hist_response = await client.get(
+                        f"{CMC_BASE_URL}/v2/cryptocurrency/quotes/historical",
+                        headers=headers,
+                        params={
+                            "id": str(token["id"]),
+                            "time_start": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "time_end": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "interval": "1d",
+                            "count": 7,
+                        }
+                    )
+                    hist_response.raise_for_status()
+                    hist_data = hist_response.json()
+                    
+                    if not hist_data.get("data"):
+                        logger.warning(f"No historical data for token {token['symbol']}")
+                        continue
+                    
+                    # Process historical data
+                    quotes = hist_data["data"]["quotes"]
+                    price_history = []
+                    prev_price = None
+                    
+                    # Sort quotes by timestamp
+                    sorted_quotes = sorted(quotes, key=lambda x: x["timestamp"])
+                    
+                    for quote in sorted_quotes:
+                        current_price = quote["quote"]["USD"]["price"]
+                        
+                        # Calculate percentage change
+                        percent_change = 0
+                        if prev_price is not None:
+                            percent_change = ((current_price - prev_price) / prev_price) * 100
+                        
+                        price_history.append({
+                            "timestamp": quote["timestamp"],
+                            "price": current_price,
+                            "percent_change": round(percent_change, 2)
+                        })
+                        
+                        prev_price = current_price
+                    
+                    all_tokens_history.append({
+                        "id": token["id"],
+                        "symbol": token["symbol"],
+                        "name": token["name"],
+                        "history": price_history
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error fetching historical data for {token['symbol']}: {str(e)}")
+                    continue
+            
+            return all_tokens_history
+            
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch meme tokens data: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error fetching meme tokens: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/category/{category_name}/top-tokens")
+async def get_top_tokens_by_category(category_name: str, limit: int = 10):
+    """Fetch top tokens from a specific category"""
+    logger.info(f"Fetching top {limit} tokens from category: {category_name}")
+    try:
+        async with httpx.AsyncClient() as client:
+            # Get all categories to find the target category ID
+            categories_response = await client.get(
+                f"{CMC_BASE_URL}/v1/cryptocurrency/categories",
+                headers=headers
+            )
+            categories_response.raise_for_status()
+            categories_data = categories_response.json()
+            
+            # Find the category ID
+            target_category = None
+            for cat in categories_data.get("data", []):
+                if cat.get("name", "").lower() == category_name.lower():
+                    target_category = cat
+                    break
+            
+            if not target_category:
+                raise HTTPException(status_code=404, detail=f"Category '{category_name}' not found")
+            
+            logger.info(f"Found category: {target_category.get('name')} (ID: {target_category.get('id')})")
+            
+            # Get tokens in the category
+            response = await client.get(
+                f"{CMC_BASE_URL}/v1/cryptocurrency/category",
+                headers=headers,
+                params={
+                    "id": target_category["id"]
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data.get("data"):
+                raise HTTPException(status_code=500, detail="No data received from CoinMarketCap")
+            
+            # Get top tokens by market cap
+            tokens = sorted(
+                data["data"]["coins"],
+                key=lambda x: float(x.get("marketCap", 0) or 0),
+                reverse=True
+            )[:limit]
+            
+            # Return simplified token info
+            return [{
+                "id": token["id"],
+                "symbol": token["symbol"],
+                "name": token["name"],
+                "market_cap": token.get("marketCap", 0)
+            } for token in tokens]
+            
+    except httpx.HTTPError as e:
+        logger.error(f"HTTP error occurred: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch category tokens: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error fetching category tokens: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/tokens/historical")
+async def get_tokens_historical_data(token_ids: List[int], days: int = 7):
+    """Fetch historical data for a list of token IDs"""
+    logger.info(f"Fetching {days} days of historical data for tokens: {token_ids}")
+    try:
+        # Get current timestamp and start timestamp
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=days)
+        
+        all_tokens_history = []
+        async with httpx.AsyncClient() as client:
+            for token_id in token_ids:
+                try:
+                    # Get token info first
+                    info_response = await client.get(
+                        f"{CMC_BASE_URL}/v2/cryptocurrency/info",
+                        headers=headers,
+                        params={"id": str(token_id)}
+                    )
+                    info_response.raise_for_status()
+                    token_info = info_response.json()
+                    
+                    if not token_info.get("data"):
+                        logger.warning(f"No info found for token ID {token_id}")
+                        continue
+                    
+                    token_data = token_info["data"][str(token_id)]
+                    
+                    # Get historical data
+                    hist_response = await client.get(
+                        f"{CMC_BASE_URL}/v2/cryptocurrency/quotes/historical",
+                        headers=headers,
+                        params={
+                            "id": str(token_id),
+                            "time_start": start_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "time_end": end_time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "interval": "1d",
+                            "count": days,
+                        }
+                    )
+                    hist_response.raise_for_status()
+                    hist_data = hist_response.json()
+                    
+                    if not hist_data.get("data"):
+                        logger.warning(f"No historical data for token {token_id}")
+                        continue
+                    
+                    # Process historical data
+                    quotes = hist_data["data"]["quotes"]
+                    price_history = []
+                    prev_price = None
+                    
+                    # Sort quotes by timestamp
+                    sorted_quotes = sorted(quotes, key=lambda x: x["timestamp"])
+                    
+                    for quote in sorted_quotes:
+                        current_price = quote["quote"]["USD"]["price"]
+                        
+                        # Calculate percentage change
+                        percent_change = 0
+                        if prev_price is not None:
+                            percent_change = ((current_price - prev_price) / prev_price) * 100
+                        
+                        price_history.append({
+                            "timestamp": quote["timestamp"],
+                            "price": current_price,
+                            "percent_change": round(percent_change, 2)
+                        })
+                        
+                        prev_price = current_price
+                    
+                    all_tokens_history.append({
+                        "id": token_id,
+                        "symbol": token_data["symbol"],
+                        "name": token_data["name"],
+                        "history": price_history
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error fetching data for token {token_id}: {str(e)}")
+                    continue
+            
+            return all_tokens_history
+            
+    except Exception as e:
+        logger.error(f"Error fetching historical data: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

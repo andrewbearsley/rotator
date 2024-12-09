@@ -20,7 +20,8 @@ import {
 } from '@mui/material';
 import { ArrowUpward, ArrowDownward, Clear as ClearIcon, Star, StarBorder } from '@mui/icons-material';
 import axios from 'axios';
-import DogeChart from './components/DogeChart';
+import MemeTokensChart from './components/DogeChart';
+import CategoryTokensChart from './components/CategoryTokensChart';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
@@ -63,6 +64,7 @@ function App() {
   const [memesHistoricalData, setMemesHistoricalData] = useState([]);
   const [memesHistoricalLoading, setMemesHistoricalLoading] = useState(false);
   const [memesHistoricalError, setMemesHistoricalError] = useState(null);
+  const [showCategoryChart, setShowCategoryChart] = useState(false);
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -221,6 +223,12 @@ function App() {
 
   const handleCategoryClick = (category) => {
     setSelectedCategory(category);
+    setShowCategoryChart(true);
+  };
+
+  const handleCategoryClose = () => {
+    setShowCategoryChart(false);
+    setSelectedCategory(null);
   };
 
   if (loading) {
@@ -249,16 +257,27 @@ function App() {
   return (
     <Container maxWidth="lg">
       <Box sx={{ my: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
-          Crypto Rotation Tracker
+        <Typography variant="h4" component="h1" gutterBottom align="center">
+          Crypto Categories
         </Typography>
-        
+
+        {showCategoryChart && selectedCategory && (
+          <Box sx={{ mb: 4 }}>
+            <CategoryTokensChart categoryName={selectedCategory.name} />
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+              <IconButton onClick={handleCategoryClose} color="primary">
+                <ClearIcon />
+              </IconButton>
+            </Box>
+          </Box>
+        )}
+
         <Card sx={{ mb: 4 }}>
           <CardContent>
             <Typography variant="h6" gutterBottom>
-              DOGE Price History
+              Meme Tokens Price Performance
             </Typography>
-            <DogeChart />
+            <MemeTokensChart />
           </CardContent>
         </Card>
 
